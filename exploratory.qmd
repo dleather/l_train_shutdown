@@ -1,0 +1,167 @@
+---
+title: "The L Train Shutdown: Building Permits"
+format: gfm
+theme: sandstone
+---
+
+```{python}
+#| echo: false
+#| output: false
+import pandas as pd
+import seaborn as sns
+import numpy as np
+import datetime as dt
+from tabulate import tabulate
+from IPython.display import Markdown
+from itables import show
+import matplotlib.pyplot as plt
+```
+
+## Permits Data
+
+```{python}
+#| echo: false
+#| output: false
+df_permits = pd.read_csv("data/permits.csv")
+```
+
+```{python}
+show(df_permits.head(20))
+```
+
+```{python}
+rename_dict = {
+    'BOROUGH': 'boro', #
+    'Block': 'block',
+    'Lot': 'lot',
+    'Bin #': 'bin',
+    'Job #': 'job',
+    'Job doc. #': 'job_doc',
+    'Job Type': 'job_type',
+    'Zip Code': 'zip_code',
+    'Bldg Type': 'bldg_type',
+    'Residential': 'residential',
+    'Work Type': 'work_type',
+    'Permit Status': 'permit_status',
+    'Permit Type': 'permit_type',
+    'Permit Sequence #': 'permit_seq',
+    'Permit Subtype': 'permit_subtype',
+    'Filing Date': 'filing_date',
+    'Issuance Date': 'issuance_date',
+    'Expiration Date': 'expiration_date',
+    'Job Start Date': 'job_start_date',
+    'LATITUDE': 'lat',
+    'LONGITUDE': 'lon'
+    }
+
+df_permits = df_permits.rename(columns = rename_dict)
+df_permits = df_permits[[val for _, val in rename_dict.items()]]
+df_permits = df_permits.dropna(subset = ['zip_code'])
+df_permits = df_permits[df_permits['boro'] == "BROOKLYN"]
+```
+
+```{python}
+df_permits['zip_code'] = [int(z) for z in df_permits['zip_code']]
+```
+
+Lets look at job type
+
+```{python}
+df_permits['job_type'].unique()
+```
+
+| Job Type Code | Job Type         |
+|---------------|:----------------:|
+| NB            | New Building     |
+| A1            | Major Alteration |
+| A2            | Major Renovation |
+| A3            | Minor Alteration |
+| DM            | Demolition       |
+| SG            | Sign             |
+
+: Job Type Codes {.striped .hover}
+
+The difference between job types A1 and A2 is that an A1 alteration changes the certificate of occupancy. For our purposes, think of adding a floor onto a residential building, or a conversion from office to residential. Job type A2 is for signficant alterations that do not alter the occupancy, such as refurbishing a hotel without adding any rooms. Alteration type A3 is for minor improvements such as adding a fence to the lot. 
+
+Let's drop A3 and SG.
+
+```{python}
+df_permits = df_permits[df_permits['job_type'] != "SG"]
+df_permits = df_permits[df_permits['job_type'] != "A3"]
+```
+
+Let's format our date variables.
+
+```{python}
+date_vars = ['filing_date', 'issuance_date', 'expiration_date']
+for date_var in date_vars:
+    df_permits[date_var] = pd.to_datetime(df_permits[date_var],
+        format='%m/%d/%Y %I:%M:%S %p', errors='coerce')
+
+df_permits['job_start_date'] = [s[:10] for s in df_permits['job_start_date']]
+df_permits['job_start_date'] = pd.to_datetime(df_permits['job_start_date'],
+        format='%m/%d/%Y', errors='coerce')
+df_permits.dropna(subset = ['filing_date'])
+```
+
+Now let's describe the current data.
+
+```{python}
+df_permits['filing_year'] = df_permits['filing_date'].dt.year
+df_permits['filing_month'] = df_permits['filing_date'].dt.month
+"""
+
+"""
+```
+
+```{python}
+tabulated_permits = (
+    df_permits[["bin", "job", "job_type", "filing_year"]]
+    .drop_duplicates()
+    .groupby(["job_type", "filing_year"])
+    .agg(issuance_count=("bin", "count"))
+    .reset_index()
+)
+
+pivot_table = (tabulated_permits
+    .pivot_table(
+        values='issuance_count',
+        index='job_type',
+        columns='filing_year',
+        fill_value=0
+    )
+    .reset_index()
+)
+show(pivot_table)
+```
+
+```{python}
+# Tabulate permits by month
+tabulated_permits = (
+    df_permits[["bin", "job", "job_type", "filing_year", "filing_month"]]
+    .drop_duplicates()
+    .groupby(["job_type", "filing_year", "filing_month"])
+    .agg(issuance_count=("bin", "count"))
+    .reset_index()
+)
+
+plot_data = tabulated_permits.copy()
+plot_data['filing_month'] = pd.Categorical(plot_data['filing_month'], categories=range(1, 13), ordered=True)
+plot_data['date'] = pd.to_datetime(plot_data['filing_year'].astype(str) + '-' + plot_data['filing_month'].astype(str).str.zfill(2) + '-01')
+
+plt.subplot(2, 1, 1)
+sns.lineplot(data=plot_data, x='date', y='issuance_count', hue='job_type')
+plt.title('Permit Issuances Over Time by Job Type')
+plt.xlabel('Date')
+plt.ylabel('Number of Issuances')
+
+pivot_for_heatmap = plot_data.pivot_table(values='issuance_count', index='filing_month', columns='filing_year', aggfunc='sum')
+plt.subplot(2, 1, 2)
+sns.heatmap(pivot_for_heatmap, cmap='YlOrRd')
+plt.title('Heatmap of Issuances by Year and Month')
+plt.xlabel('Year')
+plt.ylabel('Month')
+
+plt.tight_layout()
+plt.show()
+```
